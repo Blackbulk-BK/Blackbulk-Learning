@@ -72,6 +72,13 @@ export default async function NotebookPage({
           <span>Flashcards</span>
           <span className="text-sm opacity-70">{dueCount ?? 0} due</span>
         </Link>
+        <Link
+          href={`/notebook/${id}/quiz`}
+          className="flex items-center justify-between rounded border border-gray-300 p-3 hover:bg-gray-500/10"
+        >
+          <span>Quizzes</span>
+          <span className="text-sm opacity-70">Test yourself</span>
+        </Link>
       </section>
 
       <section>
