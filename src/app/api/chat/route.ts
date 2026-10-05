@@ -1,27 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { ai, embedTexts } from "@/lib/gemini";
-
-const MODEL = "gemini-3.8-flash";
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// Retries when Gemini is overloaded (503) or rate-limited (429)
-async function generateWithRetry(
-  params: Parameters<typeof ai.models.generateContent>[0]
-) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await ai.models.generateContent(params);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const busy = /503|UNAVAILABLE|429|RESOURCE_EXHAUSTED/.test(msg);
-      if (!busy || attempt === 2) throw err;
-      await sleep(3000 * (attempt + 1));
-    }
-  }
-  throw new Error("Gemini is busy. Please try again.");
-}
+import { embedTexts, generateWithRetry } from "@/lib/gemini";
 
 const BASE_RULES = `You are Blackbulk Learning, a study tutor.
 Rules:
@@ -63,7 +42,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Empty question" }, { status: 400 });
   }
 
-  // Row-level security: only finds the user's own notebook
   const { data: notebook } = await supabase
     .from("notebooks")
     .select("id")
@@ -72,7 +50,6 @@ export async function POST(req: Request) {
   if (!notebook) return NextResponse.json({ error: "Notebook not found" }, { status: 404 });
 
   try {
-    // 1. Find the most relevant chunks
     const [queryVector] = await embedTexts([question], "RETRIEVAL_QUERY");
     const { data: matches, error: matchError } = await supabase.rpc("match_chunks", {
       query_embedding: queryVector,
@@ -89,7 +66,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Look up source titles
     const sourceIds = [...new Set(chunks.map((c) => c.source_id))];
     const { data: sources } = await supabase
       .from("sources")
@@ -110,11 +86,11 @@ export async function POST(req: Request) {
       .map((c) => `[${c.n}] (${c.source_title}, page ${c.page ?? "?"})\n${c.content}`)
       .join("\n\n");
 
-    // 3. Recent history for context
     const { data: history } = await supabase
       .from("messages")
       .select("role, content")
       .eq("notebook_id", notebookId)
+      .eq("owner_id", user.id)
       .order("created_at", { ascending: false })
       .limit(6);
 
@@ -126,9 +102,8 @@ export async function POST(req: Request) {
       }));
     while (past.length && past[0].role === "model") past.shift();
 
-    // 4. Ask Gemini
     const response = await generateWithRetry({
-      model: MODEL,
+      model: "",
       contents: [
         ...past,
         {
@@ -141,14 +116,12 @@ export async function POST(req: Request) {
 
     const answer = response.text ?? "Sorry, I couldn't generate an answer.";
 
-    // 5. Keep only the citations the answer actually used
     const used = new Set<number>();
     for (const m of answer.matchAll(/\[(\d+(?:\s*,\s*\d+)*)\]/g)) {
       m[1].split(",").forEach((x) => used.add(parseInt(x.trim(), 10)));
     }
     const citations = numbered.filter((c) => used.has(c.n));
 
-    // 6. Save the conversation
     await supabase.from("messages").insert([
       { notebook_id: notebookId, owner_id: user.id, role: "user", content: question, citations: [] },
       { notebook_id: notebookId, owner_id: user.id, role: "assistant", content: answer, citations },
@@ -156,10 +129,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ answer, citations });
   } catch (err) {
-    const raw = err instanceof Error ? err.message : "Chat failed";
-    const message = /503|UNAVAILABLE|429|RESOURCE_EXHAUSTED/.test(raw)
-      ? "The AI is busy right now. Please try again in a moment."
-      : raw;
+    const message = err instanceof Error ? err.message : "Chat failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

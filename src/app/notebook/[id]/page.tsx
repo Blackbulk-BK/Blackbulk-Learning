@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import FileUploader from "@/components/FileUploader";
 import ChatInterface, { type Msg } from "@/components/ChatInterface";
+import ShareNotebook from "@/components/ShareNotebook";
 
 export default async function NotebookPage({
   params,
@@ -18,10 +19,24 @@ export default async function NotebookPage({
 
   const { data: notebook } = await supabase
     .from("notebooks")
-    .select("id, title")
+    .select("id, title, owner_id")
     .eq("id", id)
     .single();
   if (!notebook) notFound();
+
+  const isOwner = notebook.owner_id === user.id;
+
+  const { data: cls } = await supabase
+    .from("classes")
+    .select("id")
+    .eq("notebook_id", id)
+    .maybeSingle();
+
+  let groups: { id: string; name: string }[] = [];
+  if (isOwner && !cls) {
+    const { data } = await supabase.from("study_groups").select("id, name");
+    groups = data ?? [];
+  }
 
   const { data: sources } = await supabase
     .from("sources")
@@ -33,12 +48,14 @@ export default async function NotebookPage({
     .from("messages")
     .select("id, role, content, citations")
     .eq("notebook_id", id)
+    .eq("owner_id", user.id)
     .order("created_at", { ascending: true });
 
   const { count: dueCount } = await supabase
     .from("flashcards")
     .select("id", { count: "exact", head: true })
     .eq("notebook_id", id)
+    .eq("owner_id", user.id)
     .lte("due_at", new Date().toISOString());
 
   return (
@@ -48,12 +65,21 @@ export default async function NotebookPage({
           ← Back to dashboard
         </Link>
         <h1 className="text-2xl font-bold">{notebook.title}</h1>
+        {!isOwner && cls && (
+          <p className="text-sm opacity-70">Class materials shared by your teacher.</p>
+        )}
+        {!isOwner && !cls && (
+          <p className="text-sm opacity-70">
+            Shared with you through a study group. You can study from it but not change it.
+          </p>
+        )}
       </div>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Sources</h2>
-        <FileUploader notebookId={id} />
+        {isOwner && <FileUploader notebookId={id} />}
         <ul className="space-y-1 text-sm">
+          {sources?.length === 0 && <li className="opacity-70">No materials uploaded yet.</li>}
           {sources?.map((s) => (
             <li key={s.id} className="flex justify-between rounded border border-gray-300 p-2">
               <span>{s.title}</span>
@@ -61,6 +87,7 @@ export default async function NotebookPage({
             </li>
           ))}
         </ul>
+        {isOwner && !cls && <ShareNotebook notebookId={id} groups={groups} />}
       </section>
 
       <section className="space-y-3">
