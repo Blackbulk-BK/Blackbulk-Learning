@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import FileUploader from "@/components/FileUploader";
+import ChatInterface, { type Msg } from "@/components/ChatInterface";
 
 export default async function NotebookPage({
   params,
@@ -28,12 +29,20 @@ export default async function NotebookPage({
     .eq("notebook_id", id)
     .order("created_at", { ascending: false });
 
+  const { data: messages } = await supabase
+    .from("messages")
+    .select("id, role, content, citations")
+    .eq("notebook_id", id)
+    .order("created_at", { ascending: true });
+
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-8">
-      <Link href="/dashboard" className="text-sm underline">
-        ← Back to dashboard
-      </Link>
-      <h1 className="text-2xl font-bold">{notebook.title}</h1>
+    <main className="mx-auto max-w-2xl space-y-8 p-8">
+      <div className="space-y-2">
+        <Link href="/dashboard" className="text-sm underline">
+          ← Back to dashboard
+        </Link>
+        <h1 className="text-2xl font-bold">{notebook.title}</h1>
+      </div>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Sources</h2>
@@ -46,6 +55,10 @@ export default async function NotebookPage({
             </li>
           ))}
         </ul>
+      </section>
+
+      <section>
+        <ChatInterface notebookId={id} initialMessages={(messages ?? []) as Msg[]} />
       </section>
     </main>
   );

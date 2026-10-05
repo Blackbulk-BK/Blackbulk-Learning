@@ -4,6 +4,30 @@ import { createClient } from "@/lib/supabase/server";
 import { embedTexts } from "@/lib/gemini";
 import { chunkPages } from "@/lib/chunk";
 
+const BATCH_SIZE = 40; // free tier allows 100 embedding requests per minute
+const PAUSE_MS = 30000; // wait between batches to stay under the limit
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Retries when Gemini answers 429, waiting as long as it asks
+async function embedWithRetry(texts: string[]) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await embedTexts(texts);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const limited = msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
+      if (!limited) throw err;
+      const m = msg.match(/retry in ([\d.]+)s/i);
+      const wait = m ? Math.ceil(parseFloat(m[1])) * 1000 + 2000 : 45000;
+      await sleep(wait);
+    }
+  }
+  throw new Error(
+    "Gemini is rate-limiting this key. Wait a few minutes and try again."
+  );
+}
+
 export async function POST(req: Request) {
   const supabase = await createClient();
   const {
@@ -13,7 +37,6 @@ export async function POST(req: Request) {
 
   const { sourceId } = await req.json();
 
-  // Row-level security guarantees this only finds the user's own source
   const { data: source } = await supabase
     .from("sources")
     .select("*")
@@ -24,6 +47,8 @@ export async function POST(req: Request) {
   }
 
   await supabase.from("sources").update({ status: "processing" }).eq("id", sourceId);
+  // Start clean in case an earlier attempt left partial chunks
+  await supabase.from("chunks").delete().eq("source_id", sourceId);
 
   try {
     const { data: file, error: dlError } = await supabase.storage
@@ -39,10 +64,11 @@ export async function POST(req: Request) {
       throw new Error("No text found. This may be a scanned PDF.");
     }
 
-    // Embed and save in batches of 50
-    for (let i = 0; i < chunks.length; i += 50) {
-      const batch = chunks.slice(i, i + 50);
-      const vectors = await embedTexts(batch.map((c) => c.content));
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      if (i > 0) await sleep(PAUSE_MS);
+
+      const batch = chunks.slice(i, i + BATCH_SIZE);
+      const vectors = await embedWithRetry(batch.map((c) => c.content));
 
       const rows = batch.map((c, j) => ({
         source_id: source.id,
@@ -62,6 +88,7 @@ export async function POST(req: Request) {
     await supabase.from("sources").update({ status: "ready" }).eq("id", sourceId);
     return NextResponse.json({ ok: true, chunks: chunks.length });
   } catch (err) {
+    await supabase.from("chunks").delete().eq("source_id", sourceId);
     await supabase.from("sources").update({ status: "failed" }).eq("id", sourceId);
     const message = err instanceof Error ? err.message : "Ingest failed";
     return NextResponse.json({ error: message }, { status: 500 });
