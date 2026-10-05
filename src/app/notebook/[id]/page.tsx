@@ -35,6 +35,12 @@ export default async function NotebookPage({
     .eq("notebook_id", id)
     .order("created_at", { ascending: true });
 
+  const { count: dueCount } = await supabase
+    .from("flashcards")
+    .select("id", { count: "exact", head: true })
+    .eq("notebook_id", id)
+    .lte("due_at", new Date().toISOString());
+
   return (
     <main className="mx-auto max-w-2xl space-y-8 p-8">
       <div className="space-y-2">
@@ -55,6 +61,17 @@ export default async function NotebookPage({
             </li>
           ))}
         </ul>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">The Forge</h2>
+        <Link
+          href={`/notebook/${id}/flashcards`}
+          className="flex items-center justify-between rounded border border-gray-300 p-3 hover:bg-gray-500/10"
+        >
+          <span>Flashcards</span>
+          <span className="text-sm opacity-70">{dueCount ?? 0} due</span>
+        </Link>
       </section>
 
       <section>

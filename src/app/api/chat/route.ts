@@ -29,7 +29,8 @@ Rules:
 - If the sources do not contain the answer, say so plainly and suggest what the student could upload or ask instead.
 - After every claim taken from a source, add its number in square brackets, like [1] or [2]. Use one number per bracket.
 - Never invent page numbers, quotes, or facts.
-- Keep answers clear and reasonably short.`;
+- Keep answers clear and reasonably short.
+- Do not use markdown formatting such as ** or *. Write plain sentences and short paragraphs.`;
 
 const SOCRATIC = `${BASE_RULES}
 
