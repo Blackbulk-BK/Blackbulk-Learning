@@ -2,7 +2,26 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { ai, embedTexts } from "@/lib/gemini";
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.8-flash";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Retries when Gemini is overloaded (503) or rate-limited (429)
+async function generateWithRetry(
+  params: Parameters<typeof ai.models.generateContent>[0]
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const busy = /503|UNAVAILABLE|429|RESOURCE_EXHAUSTED/.test(msg);
+      if (!busy || attempt === 2) throw err;
+      await sleep(3000 * (attempt + 1));
+    }
+  }
+  throw new Error("Gemini is busy. Please try again.");
+}
 
 const BASE_RULES = `You are Blackbulk Learning, a study tutor.
 Rules:
@@ -107,7 +126,7 @@ export async function POST(req: Request) {
     while (past.length && past[0].role === "model") past.shift();
 
     // 4. Ask Gemini
-    const response = await ai.models.generateContent({
+    const response = await generateWithRetry({
       model: MODEL,
       contents: [
         ...past,
@@ -136,7 +155,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ answer, citations });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Chat failed";
+    const raw = err instanceof Error ? err.message : "Chat failed";
+    const message = /503|UNAVAILABLE|429|RESOURCE_EXHAUSTED/.test(raw)
+      ? "The AI is busy right now. Please try again in a moment."
+      : raw;
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
