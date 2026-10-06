@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import FileUploader from "@/components/FileUploader";
+import SourceList from "@/components/SourceList";
 import ChatInterface, { type Msg } from "@/components/ChatInterface";
 import ShareNotebook from "@/components/ShareNotebook";
 
@@ -40,7 +41,7 @@ export default async function NotebookPage({
 
   const { data: sources } = await supabase
     .from("sources")
-    .select("id, title, status")
+    .select("id, title, status, storage_path")
     .eq("notebook_id", id)
     .order("created_at", { ascending: false });
 
@@ -78,15 +79,7 @@ export default async function NotebookPage({
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Sources</h2>
         {isOwner && <FileUploader notebookId={id} />}
-        <ul className="space-y-1 text-sm">
-          {sources?.length === 0 && <li className="opacity-70">No materials uploaded yet.</li>}
-          {sources?.map((s) => (
-            <li key={s.id} className="flex justify-between rounded border border-gray-300 p-2">
-              <span>{s.title}</span>
-              <span className="opacity-70">{s.status}</span>
-            </li>
-          ))}
-        </ul>
+        <SourceList sources={sources ?? []} isOwner={isOwner} />
         {isOwner && !cls && <ShareNotebook notebookId={id} groups={groups} />}
       </section>
 

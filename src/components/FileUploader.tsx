@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { indexSource } from "@/lib/indexSource";
 
 export default function FileUploader({ notebookId }: { notebookId: string }) {
   const router = useRouter();
   const supabase = createClient();
   const [status, setStatus] = useState("");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -19,6 +21,7 @@ export default function FileUploader({ notebookId }: { notebookId: string }) {
     }
 
     setBusy(true);
+    setProgress(null);
     try {
       const {
         data: { user },
@@ -36,6 +39,7 @@ export default function FileUploader({ notebookId }: { notebookId: string }) {
         .select()
         .single();
       if (srcError) throw new Error(srcError.message);
+      router.refresh();
 
       setStatus("Uploading...");
       const path = `${user!.id}/${notebookId}/${source.id}.pdf`;
@@ -46,23 +50,24 @@ export default function FileUploader({ notebookId }: { notebookId: string }) {
 
       await supabase.from("sources").update({ storage_path: path }).eq("id", source.id);
 
-      setStatus("Reading and indexing (this can take a bit)...");
-      const res = await fetch("/api/ingest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceId: source.id }),
+      await indexSource(source.id, (done, total, message) => {
+        setStatus(message);
+        if (total > 0) setProgress({ done, total });
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Ingest failed");
 
-      setStatus(`Done: ${json.chunks} chunks indexed.`);
+      setStatus("Done! Your PDF is ready to use.");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Something went wrong");
+      setStatus(
+        (err instanceof Error ? err.message : "Something went wrong") +
+          " You can resume from the sources list below."
+      );
     } finally {
       setBusy(false);
       router.refresh();
     }
   }
+
+  const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
     <div className="space-y-2 rounded-xl border border-dashed border-gray-400 p-4">
@@ -73,6 +78,16 @@ export default function FileUploader({ notebookId }: { notebookId: string }) {
         disabled={busy}
       />
       {status && <p className="text-sm">{status}</p>}
+      {progress && busy && (
+        <div className="space-y-1">
+          <div className="h-2 overflow-hidden rounded bg-gray-500/20">
+            <div className="h-full bg-blue-400 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+          <p className="text-xs opacity-60">
+            {progress.done} of {progress.total} sections indexed. Keep this tab open.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
